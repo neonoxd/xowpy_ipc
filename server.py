@@ -131,23 +131,24 @@ class IPCServer:
 			s.bind((self.host, self.port))
 			s.listen(1)
 			while True:
+				conn = None
 				try:
 					self.log("accepting connections")
 					conn, addr = s.accept()
 					with conn:
-						self.log('conn by', addr)
+						self.log('incoming connection', addr)
 						while True:
 							data = conn.recv(1024)
 							if not data: break
 							self.log("SOCK: got data", data)
 							ipcmsg = IPCMSG(data)
 							self.handle_ipc_message(ipcmsg)
-					self.log("xow detached")
+					self.log("client disconnected")
 				except KeyboardInterrupt:
 					if conn:
-						self.log("closing conn")
+						self.log("closing connection")
 						conn.close()
-						exit()
+					exit(0)
 
 
 server = IPCServer(args=sys.argv[1:])
