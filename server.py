@@ -10,20 +10,9 @@ logger = logging.getLogger('srvlogger')
 logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
-# formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 formatter = logging.Formatter('%(message)s')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
-
-HOST = ''
-PORT = 50007
-levels = ["empty", "low", "medium", "full"]
-
-
-@dataclass
-class Controller:
-	id: str
-	battery_level: str
 
 
 @dataclass
@@ -63,66 +52,103 @@ class Controller:
 		self.battery_level = battery_level
 
 
+battery_levels = ["empty", "low", "medium", "full"]
+
+ipc = {
+	"DONGLE_ON": "DN",
+	"PAIRINGSTART": "PS",
+	"CONTROLLERCONN": "CC",
+	"CONTROLLERDC": "CD",
+	"BATTERYLVL": "BL"
+}
 mapping = {
-	"DN": {"fields": [{"name": "dummy"}], "description": "dongle_initialized"},
-	"PS": {"fields": [{"name": "dummy"}], "description": "pairing_started"},
-	"CC": {"fields": [{"name": "controller_id"}], "description": "controller_connected"},
-	"CD": {"fields": [{"name": "controller_id"}], "description": "controller_disconnected"},
-	"BL": {"fields": [{"name": "dummy"}, {"name": "battery_level_id"}], "description": "battery_level"}
+	ipc["DONGLE_ON"]: {"fields": [{"name": "dummy"}], "description": "dongle_initialized"},
+	ipc["PAIRINGSTART"]: {"fields": [{"name": "dummy"}], "description": "pairing_started"},
+	ipc["CONTROLLERCONN"]: {"fields": [{"name": "controller_id"}], "description": "controller_connected"},
+	ipc["CONTROLLERDC"]: {"fields": [{"name": "controller_id"}], "description": "controller_disconnected"},
+	ipc["BATTERYLVL"]: {"fields": [{"name": "dummy"}, {"name": "battery_level_id"}], "description": "battery_level"}
 }
 
-controllers = {}
 
-debug = True if len(sys.argv) > 1 else False
+class IPCServer:
 
+	def __init__(self, host='', port=50007, args=[]):
+		self.host = host
+		self.port = port
+		self.controllers = []
+		self.debug = True if "-d" in args else False
 
-def log(*args):
-	if debug:
-		out = "LOG$"
-		argstrs = [str(a) for a in args]
-		out += " ".join(argstrs)
+	def log(self, *args):
+		if self.debug:
+			out = "LOG$"
+			argstrs = [str(a) for a in args]
+			out += " ".join(argstrs)
+			logger.debug(out)
+
+	def display(self, message):
+		out = ""
+		if self.debug:
+			out += "DISPLAY$"
+		out += str(message)
 		logger.debug(out)
 
+	def connected_controllers(self):
+		return len(self.controllers)
 
-def display(message):
-	out = ""
-	if debug:
-		out += "DISPLAY$"
-	out += str(message)
-	logger.debug(out)
+	def handle_controller_connected(self, ipc_message):
+		self.controllers.append(Controller(
+			ipc_message.fields["controller_id"],
+			"N/A"))
+		self.log(f"controllers: {self.controllers}")
+		self.display(len(self.controllers))
+
+	def handle_controller_disconnected(self, ipc_message):
+		self.controllers = [i for i in self.controllers if not (i.controller_id == ipc_message.fields["controller_id"])]
+		self.log(f"controllers: {self.controllers}")
+		self.display(self.connected_controllers())
+
+	def handle_got_battery_level(self, ipc_message):
+		if len(self.controllers) > 0:
+			self.controllers[-1:][0].battery_level = battery_levels[int(ipc_message.fields["battery_level_id"])]
+		self.log(f"controllers: {self.controllers}")
+
+	def handle_ipc_message(self, ipc_message):
+		if ipc_message.type_str == ipc["DONGLE_ON"]:
+			self.log("dongle initialized")
+			self.display("ON")
+		elif ipc_message.type_str == ipc["PAIRINGSTART"]:
+			self.log("pairing started")
+			self.display("PAIRING")
+		elif ipc_message.type_str == ipc["CONTROLLERCONN"]:
+			self.handle_controller_connected(ipc_message)
+		elif ipc_message.type_str == ipc["CONTROLLERDC"]:
+			self.handle_controller_disconnected(ipc_message)
+		elif ipc_message.type_str == ipc["BATTERYLVL"]:
+			self.handle_got_battery_level(ipc_message)
+
+	def loop(self):
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			s.bind((self.host, self.port))
+			s.listen(1)
+			while True:
+				try:
+					self.log("accepting connections")
+					conn, addr = s.accept()
+					with conn:
+						self.log('conn by', addr)
+						while True:
+							data = conn.recv(1024)
+							if not data: break
+							self.log("SOCK: got data", data)
+							ipcmsg = IPCMSG(data)
+							self.handle_ipc_message(ipcmsg)
+					self.log("xow detached")
+				except KeyboardInterrupt:
+					if conn:
+						self.log("closing conn")
+						conn.close()
+						exit()
 
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-	s.bind((HOST, PORT))
-	s.listen(1)
-	while True:
-		try:
-			log("accepting connections")
-			conn, addr = s.accept()
-			with conn:
-				log('conn by', addr)
-				while True:
-					data = conn.recv(1024)
-					if not data: break
-					log("SOCK: got data", data)
-					ipcmsg = IPCMSG(data)
-					if ipcmsg.type_str == "DN":
-						log("dongle initialized")
-						display("ON")
-					if ipcmsg.type_str == "PS":
-						log("pairing started")
-						display("PAIRING")
-					if ipcmsg.type_str == "CC":
-						controllers[ipcmsg.fields["controller_id"]] = Controller(ipcmsg.fields["controller_id"], "N/A")
-						log(f"controllers: {controllers}")
-						display(len(controllers))
-					elif ipcmsg.type_str == "CD":
-						del controllers[ipcmsg.fields["controller_id"]]
-						log(f"controllers: {controllers}")
-						display(len(controllers))
-			log("xow detached")
-		except KeyboardInterrupt:
-			if conn:
-				log("closing conn")
-				conn.close()
-				exit()
+server = IPCServer(args=sys.argv[1:])
+server.loop()

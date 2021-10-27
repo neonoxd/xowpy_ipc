@@ -11,7 +11,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.send('DN|1'.encode())
     sleep(1)
     s.send('PS|1'.encode())
-    sleep(3)
+    sleep(1)
     s.send('CC|1'.encode())
     sleep(1)
     s.send('BL|0|2'.encode())
