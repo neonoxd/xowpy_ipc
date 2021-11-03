@@ -1,11 +1,11 @@
 #!/usr/bin/python
 
-# Echo client program
+# test stuff
 import socket
 from time import sleep
 
-HOST = 'localhost'    # The remote host
-PORT = 50007              # The same port as used by the server
+HOST = 'localhost'
+PORT = 50007
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, PORT))
     s.send('DN|1'.encode())
@@ -14,7 +14,9 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     sleep(1)
     s.send('CC|1'.encode())
     sleep(1)
-    s.send('BL|0|2'.encode())
+    s.send('BL|1|2'.encode())
+    sleep(1)
+    s.send('CC|2'.encode())
     sleep(1)
     s.send('CD|1'.encode())
     sleep(1)

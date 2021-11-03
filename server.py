@@ -5,6 +5,7 @@ import socket
 from dataclasses import dataclass, field
 from typing import List
 import sys
+import signal
 
 logger = logging.getLogger('srvlogger')
 logger.setLevel(logging.DEBUG)
@@ -51,6 +52,9 @@ class Controller:
 		self.controller_id = controller_id
 		self.battery_level = battery_level
 
+	def __str__(self):
+		return f"{self.controller_id} - {self.battery_level}"
+
 
 battery_levels = ["empty", "low", "medium", "full"]
 
@@ -77,6 +81,7 @@ class IPCServer:
 		self.port = port
 		self.controllers = []
 		self.debug = True if "-d" in args else False
+		self.last_msg_type = None
 
 	def log(self, *args):
 		if self.debug:
@@ -85,12 +90,24 @@ class IPCServer:
 			out += " ".join(argstrs)
 			logger.debug(out)
 
-	def display(self, message):
+	def display(self, message, msgtype=None):
+		self.last_msg_type = msgtype
 		out = ""
 		if self.debug:
 			out += "DISPLAY$"
 		out += str(message)
 		logger.debug(out)
+
+	def display_battery_status(self):
+		self.display(" / ".join([str(controller) for controller in self.controllers]), 'BC')
+
+	def handle_battery_status_check_signal(self):
+		if not self.connected_controllers():
+			return
+		if self.last_msg_type != "BC":
+			self.display_battery_status()
+		else:
+			self.display(self.connected_controllers())
 
 	def connected_controllers(self):
 		return len(self.controllers)
@@ -111,6 +128,7 @@ class IPCServer:
 		if len(self.controllers) > 0:
 			self.controllers[-1:][0].battery_level = battery_levels[int(ipc_message.fields["battery_level_id"])]
 		self.log(f"controllers: {self.controllers}")
+		self.handle_battery_status_check_signal()
 
 	def handle_ipc_message(self, ipc_message):
 		if ipc_message.type_str == ipc["DONGLE_ON"]:
@@ -151,5 +169,17 @@ class IPCServer:
 					exit(0)
 
 
+def onsig1(*args):
+	server.log(f"got SIGUSR1 {args}")
+	server.handle_battery_status_check_signal()
+
+
+def onsig2(*args):
+	# UNUSED
+	server.log(f"got SIGUSR2 {args}")
+
+
+signal.signal(signal.SIGUSR1, onsig1)
+signal.signal(signal.SIGUSR2, onsig2)
 server = IPCServer(args=sys.argv[1:])
 server.loop()
